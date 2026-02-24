@@ -1,0 +1,5 @@
+nmrglue
+numpy
+scipy
+matplotlib
+PyQt6
