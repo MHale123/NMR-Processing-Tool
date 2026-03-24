@@ -4,27 +4,32 @@ import numpy as np
 
 class BrukerLoader:
     def __init__(self, exp_path):
+        """
+        exp_path: Path to the specific experiment folder (e.g., '.../Test/Experiment/1')
+        """
         self.exp_path = exp_path
 
+    def get_metadata(self):
+        """Extracts T1-specific parameters: Pulse program and delays."""
+        dic, _ = ng.bruker.read(self.exp_path)
+        acqus = dic['acqus']
+        
+        # Pulling the D array (delays)
+        # In your IR experiment, D1 is recycle, D16 is the variable delay
+        metadata = {
+            "pulprog": acqus.get('PULPROG', 'unknown'),
+            "d1": acqus['D'][1],
+            "d16": acqus['D'][16],
+            "nuc": acqus.get('NUC1', 'unknown'),
+            "sfo1": acqus.get('SFO1', 0.0) # Frequency for PPM conversion
+        }
+        return metadata
+
     def load_processed_data(self, proc_no=1):
-        """
-        Reads the processed 2D data (the stack of T1 experiments).
-        Returns the dictionary and the 2D data matrix.
-        """
+        """Loads the processed 2D matrix (pdata/1/2rr or 1r)."""
         pdata_path = os.path.join(self.exp_path, 'pdata', str(proc_no))
         if not os.path.exists(pdata_path):
-            raise FileNotFoundError(f"Could not find pdata at {pdata_path}")
-            
-        # ng.bruker.read_pdata handles the Bruker-specific processing files
-        dic, data = ng.bruker.read_pdata(pdata_path)
-        return dic, data
-
-    def get_vd_list(self):
-        """
-        Attempts to find the variable delay list.
-        In your case, we will start by pulling D16 as a baseline.
-        """
-        dic, _ = ng.bruker.read(self.exp_path)
-        # We'll eventually need to handle the full list of delays
-        # for all points in the recovery curve.
-        return dic['acqus']['D'][16]
+            return None, None
+        
+        # read_pdata returns (dictionary, data_array)
+        return ng.bruker.read_pdata(pdata_path)
