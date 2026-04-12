@@ -281,3 +281,163 @@ class BrukerLoader:
                 return uc.ppm_scale()
             except Exception:
                 return None
+
+
+def load_1d_spectrum(exp_path, proc_no=1):
+    """
+    Loads a processed Bruker 1D spectrum from pdata/<proc_no>/1r.
+
+    This is used by the CSP module for loading individual concentration
+    points. Each folder is a separate 1D acquisition.
+
+    Parameters
+    ----------
+    exp_path : str, path to the numbered Bruker experiment folder
+    proc_no  : int, processing number (default 1)
+
+    Returns
+    -------
+    dict with keys:
+      'ppm'      : 1D numpy array of chemical shift values
+      'spectrum' : 1D numpy array of real intensities
+      'nucleus'  : str, e.g. '19F' or '1H'
+      'sfo1_mhz' : float, spectrometer frequency
+      'sw_hz'    : float, spectral width in Hz
+      'pulprog'  : str, pulse program name
+      'path'     : str, the experiment path
+    or raises FileNotFoundError / ValueError on failure.
+    """
+    # Find processed data folder
+    pdata_path = None
+    for candidate in ('pdata', 'data'):
+        p = os.path.join(exp_path, candidate, str(proc_no))
+        if os.path.exists(p):
+            pdata_path = p
+            break
+
+    if pdata_path is None:
+        raise FileNotFoundError(
+            "No processed data folder found in:\n  {}\n"
+            "Looked for pdata/{}/ and data/{}/".format(exp_path, proc_no, proc_no)
+        )
+
+    one_r = os.path.join(pdata_path, '1r')
+    if not os.path.exists(one_r):
+        raise FileNotFoundError(
+            "No '1r' file found in:\n  {}\n"
+            "This folder does not contain a processed 1D spectrum.".format(pdata_path)
+        )
+
+    # ------------------------------------------------------------------
+    # Read processed 1D data — real (1r) and imaginary (1i) parts.
+    # Having both parts allows us to apply zero- and first-order phase
+    # correction in software, which fixes the curved baselines that arise
+    # when the on-spectrometer phase correction was imperfect.
+    # ------------------------------------------------------------------
+    dic, data_r = ng.bruker.read_pdata(pdata_path)
+    spectrum_r  = np.array(data_r, dtype=float).ravel()
+
+    # Try to load imaginary part (may not exist for all datasets)
+    one_i = os.path.join(pdata_path, '1i')
+    spectrum_i = None
+    if os.path.exists(one_i):
+        try:
+            _, data_i  = ng.bruker.read_pdata(
+                pdata_path, bin_files=['1i'])
+            spectrum_i = np.array(data_i, dtype=float).ravel()
+            if len(spectrum_i) != len(spectrum_r):
+                spectrum_i = None
+        except Exception:
+            spectrum_i = None
+
+    # Read PHC0 / PHC1 from procs for phase correction
+    phc0, phc1 = 0.0, 0.0
+    procs_path_phase = os.path.join(pdata_path, 'procs')
+    if os.path.exists(procs_path_phase):
+        try:
+            params_ph = {}
+            with open(procs_path_phase, 'r', encoding='latin-1') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('##$') and '=' in line:
+                        key, _, val = line[3:].partition('=')
+                        params_ph[key.strip()] = val.strip()
+            phc0 = float(params_ph.get('PHC0', 0.0))
+            phc1 = float(params_ph.get('PHC1', 0.0))
+        except Exception:
+            pass
+
+    # Apply phase correction if we have imaginary data.
+    # Phase model: spec_phased = real( (R + iI) * exp(i*phi(x)) )
+    # where phi(x) = (phc0 + phc1*(x - x_pivot)) in radians.
+    # x_pivot = right edge of spectrum (standard Bruker convention).
+    if spectrum_i is not None and (phc0 != 0.0 or phc1 != 0.0):
+        n      = len(spectrum_r)
+        # Normalised frequency axis 0→1 left to right (Bruker convention)
+        x_norm = np.linspace(0.0, 1.0, n)
+        phi    = np.deg2rad(phc0 + phc1 * x_norm)
+        cplx   = (spectrum_r + 1j * spectrum_i) * np.exp(1j * phi)
+        spectrum = cplx.real
+    else:
+        spectrum = spectrum_r
+
+    # Build ppm axis from procs (same logic as BrukerLoader.get_ppm_axis)
+    procs_path = os.path.join(pdata_path, 'procs')
+    ppm = None
+    if os.path.exists(procs_path):
+        try:
+            params = {}
+            with open(procs_path, 'r', encoding='latin-1') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('##$') and '=' in line:
+                        key, _, val = line[3:].partition('=')
+                        params[key.strip()] = val.strip()
+            sw_p   = float(params['SW_p'])
+            sf     = float(params['SF'])
+            offset = float(params['OFFSET'])
+            si     = int(params['SI'])
+            sw_ppm = sw_p / sf
+            ppm    = np.linspace(offset, offset - sw_ppm, si)
+        except Exception:
+            ppm = None
+
+    if ppm is None or len(ppm) != len(spectrum):
+        ppm = np.arange(len(spectrum), dtype=float)
+
+    # Read acqus for metadata
+    acqus_path = os.path.join(exp_path, 'acqus')
+    nucleus  = 'unknown'
+    sfo1     = 0.0
+    sw_hz    = 0.0
+    pulprog  = 'unknown'
+
+    if os.path.exists(acqus_path):
+        try:
+            params = {}
+            with open(acqus_path, 'r', encoding='latin-1') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('##$') and '=' in line:
+                        key, _, val = line[3:].partition('=')
+                        params[key.strip()] = val.strip()
+            nucleus = params.get('NUC1', 'unknown').strip('<>').strip()
+            sfo1    = float(params.get('SFO1', 0.0))
+            sw_hz   = float(params.get('SW_h', 0.0))
+            pulprog = params.get('PULPROG', 'unknown').strip('<>').strip()
+        except Exception:
+            pass
+
+    return {
+        'ppm':      ppm,
+        'spectrum': spectrum,
+        'spectrum_r': spectrum_r,
+        'spectrum_i': spectrum_i,   # None if 1i not available
+        'phc0':     phc0,
+        'phc1':     phc1,
+        'nucleus':  nucleus,
+        'sfo1_mhz': sfo1,
+        'sw_hz':    sw_hz,
+        'pulprog':  pulprog,
+        'path':     exp_path,
+    }
