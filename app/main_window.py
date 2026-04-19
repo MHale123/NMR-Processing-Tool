@@ -628,8 +628,14 @@ class MainWindow(QMainWindow):
         if self._last_fit is None:
             return
 
+        import os
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        if not os.path.isdir(desktop):
+            desktop = os.path.expanduser("~")
+        default_path = os.path.join(desktop, "t1_results.csv")
+
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Save Results", "t1_results.csv",
+            self, "Save Results", default_path,
             "CSV files (*.csv);;All files (*)"
         )
         if not filepath:

@@ -73,3 +73,46 @@ def export_results(filepath, result, delays, trajectory, integration_window, exp
             if fitted is not None and i < len(fitted):
                 row += ["{:.2f}".format(fitted[i]), "{:.2f}".format(residuals[i])]
             writer.writerow(row)
+
+def export_waterfall(fig, ax, filepath, fmt='png'):
+    """
+    Saves a CSP waterfall figure to disk as a black-and-white image.
+
+    All coloured traces are temporarily rendered in black at a uniform
+    linewidth, and any coloured background patches (active-row highlight,
+    rubber-band rect, etc.) are made transparent.  The original colours
+    are restored immediately after saving so the on-screen view is unchanged.
+
+    Parameters
+    ----------
+    fig      : matplotlib Figure containing the waterfall axes
+    ax       : the waterfall Axes object
+    filepath : str, full output path (extension should match fmt)
+    fmt      : 'png' | 'pdf' | 'svg'
+    """
+    # ── Temporarily override line colours to black ──────────────────────────
+    lines = ax.get_lines()
+    saved_lines = [(l, l.get_color(), l.get_linewidth()) for l in lines]
+    for l in lines:
+        l.set_color('black')
+        l.set_linewidth(0.85)
+
+    # ── Suppress coloured background patches ────────────────────────────────
+    saved_patches = []
+    for patch in list(ax.patches):
+        saved_patches.append((patch, patch.get_facecolor()))
+        patch.set_facecolor('none')
+
+    # ── Save ────────────────────────────────────────────────────────────────
+    try:
+        kw = {'bbox_inches': 'tight', 'facecolor': 'white'}
+        if fmt == 'png':
+            kw['dpi'] = 300
+        fig.savefig(filepath, format=fmt, **kw)
+    finally:
+        # ── Always restore colours even if save raises ───────────────────────
+        for l, c, lw in saved_lines:
+            l.set_color(c)
+            l.set_linewidth(lw)
+        for patch, fc in saved_patches:
+            patch.set_facecolor(fc)
