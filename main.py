@@ -55,11 +55,11 @@ class LauncherWindow(QWidget):
 
         # CSP module
         csp_col = QVBoxLayout()
-        btn_csp = QPushButton("CSP Binding Analysis")
+        btn_csp = QPushButton("Chemical Shift Pertubation")
         btn_csp.setFixedHeight(60)
         btn_csp.setStyleSheet("font-size: 14px; font-weight: bold;")
         btn_csp.clicked.connect(self.open_csp)
-        csp_desc = QLabel("Chemical shift perturbation\nProtein binding and Kd")
+        csp_desc = QLabel("Create waterfall plots")
         csp_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         csp_desc.setStyleSheet("color: gray; font-size: 11px;")
         csp_col.addWidget(btn_csp)
